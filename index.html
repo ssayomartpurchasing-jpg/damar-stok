@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DAMAR — INVENTORY DAN STOCK</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <h1>DAMAR</h1>
+    <p>INVENTORY DAN STOCK</p>
+  </header>
+
+  <nav aria-label="Menu utama">
+    <button id="menu-stok" type="button">Stok Barang</button>
+    <button id="menu-masuk" type="button">Barang Masuk</button>
+    <button id="menu-keluar" type="button">Barang Keluar</button>
+    <button id="menu-riwayat" type="button">Riwayat</button>
+  </nav>
+
+  <main>
+    <!-- STOK BARANG -->
+    <section id="bagian-stok">
+      <h2>Stok Barang</h2>
+
+      <div class="aksi">
+        <button id="unduh-excel" type="button">
+          Unduh Semua Data Excel
+        </button>
+        <button id="cadangkan-data" class="sekunder" type="button">
+          Cadangkan Data
+        </button>
+      </div>
+
+      <details>
+        <summary>Pulihkan Cadangan</summary>
+        <div class="isi-panel">
+          <label for="file-cadangan">Pilih cadangan JSON:</label>
+          <input id="file-cadangan" type="file" accept=".json">
+          <p class="catatan">
+            Pemulihan mengganti seluruh data dengan isi cadangan.
+          </p>
+          <p id="pesan-pemulihan" role="status"></p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Impor Master dari Excel</summary>
+        <div class="isi-panel">
+          <button id="template-master" type="button">
+            Unduh Template Excel
+          </button>
+
+          <label for="file-master">Pilih file Excel yang sudah diisi:</label>
+          <input id="file-master" type="file" accept=".xlsx">
+
+          <p class="catatan">
+            Membaca sheet pertama. Kode yang sudah terdaftar dilewati.
+            Stok awal impor tidak dicatat sebagai transaksi riwayat.
+          </p>
+          <p id="pesan-impor" role="status"></p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Tambah Barang Manual</summary>
+        <div class="isi-panel">
+          <form id="form-barang" class="form-grid">
+            <label for="kode-barang">
+              Kode / Barcode
+              <input
+                id="kode-barang"
+                type="text"
+                placeholder="Contoh: BRG001"
+                required
+              >
+            </label>
+
+            <label for="nama-barang">
+              Nama Barang
+              <input
+                id="nama-barang"
+                type="text"
+                placeholder="Contoh: Susu UHT"
+                required
+              >
+            </label>
+
+            <label for="satuan-barang">
+              Satuan
+              <input
+                id="satuan-barang"
+                type="text"
+                placeholder="PCS, KG, atau lainnya"
+                required
+              >
+            </label>
+
+            <label for="stok-awal">
+              Stok Awal
+              <input
+                id="stok-awal"
+                type="number"
+                min="0"
+                step="0.001"
+                value="0"
+                required
+              >
+            </label>
+
+            <button class="selebar" type="submit">Simpan Barang</button>
+          </form>
+
+          <p id="pesan-barang" role="status"></p>
+        </div>
+      </details>
+
+      <div class="pencarian">
+        <label for="cari-barang">Cari barang</label>
+        <input
+          id="cari-barang"
+          type="search"
+          placeholder="Ketik nama barang atau barcode..."
+          autocomplete="off"
+        >
+      </div>
+
+      <p id="jumlah-barang" class="catatan" role="status"></p>
+
+      <div class="tabel-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Kode / Barcode</th>
+              <th>Nama Barang</th>
+              <th>Satuan</th>
+              <th class="angka">Stok</th>
+            </tr>
+          </thead>
+          <tbody id="daftar-stok"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- BARANG MASUK / KELUAR -->
+    <section id="bagian-transaksi" hidden>
+      <h2 id="judul-transaksi">Barang Masuk</h2>
+
+      <form id="form-transaksi" class="form-transaksi">
+        <label for="tanggal-transaksi">
+          Tanggal Transaksi
+          <input id="tanggal-transaksi" type="date" required>
+        </label>
+
+        <label for="pilih-barang">
+          Pilih Barang
+          <select id="pilih-barang" required>
+            <option value="">-- Pilih barang --</option>
+          </select>
+        </label>
+
+        <p id="info-stok" class="info-stok"></p>
+
+        <label for="jumlah-transaksi">
+          Jumlah
+          <input
+            id="jumlah-transaksi"
+            type="number"
+            min="0.001"
+            step="0.001"
+            required
+          >
+        </label>
+
+        <label for="keterangan-transaksi">
+          Keterangan
+          <input
+            id="keterangan-transaksi"
+            type="text"
+            maxlength="250"
+            placeholder="Supplier, tujuan, atau nomor dokumen"
+          >
+        </label>
+
+        <button type="submit">Simpan Transaksi</button>
+      </form>
+
+      <p id="pesan-transaksi" role="status"></p>
+
+<details id="panel-impor-transaksi">
+  <summary>Import Transaksi Massal dari Excel</summary>
+
+  <div class="isi-panel">
+    <p class="catatan">
+      Unggah banyak transaksi sekaligus menggunakan Excel.
+      Pilih template, isi data, lalu unggah kembali.
+    </p>
+
+    <button id="template-transaksi" type="button">
+      Unduh Template Excel
+    </button>
+
+    <label for="file-transaksi">
+      Pilih file Excel:
+    </label>
+
+    <input
+      id="file-transaksi"
+      type="file"
+      accept=".xlsx,.xls"
+    >
+
+    <p id="pesan-impor-transaksi" role="status"></p>
+
+    <div id="pratinjau-impor" hidden>
+      <p id="ringkasan-impor" class="catatan"></p>
+
+      <div class="tabel-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Baris</th>
+              <th>Tanggal</th>
+              <th>Kode</th>
+              <th>Nama Barang</th>
+              <th>Jumlah</th>
+              <th>Keterangan</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="daftar-pratinjau-impor"></tbody>
+        </table>
+      </div>
+
+      <div class="aksi">
+        <button id="proses-impor-transaksi" type="button" disabled>
+          Proses Import
+        </button>
+
+        <button id="batal-impor-transaksi" class="sekunder" type="button">
+          Batal
+        </button>
+      </div>
+    </div>
+  </div>
+</details>
+
+    </section>
+
+    <!-- RIWAYAT -->
+    <section id="bagian-riwayat" hidden>
+      <h2>Riwayat Transaksi</h2>
+
+      <div class="filter-riwayat">
+        <label for="filter-dari">
+          Dari Tanggal
+          <input id="filter-dari" type="date">
+        </label>
+
+        <label for="filter-sampai">
+          Sampai Tanggal
+          <input id="filter-sampai" type="date">
+        </label>
+
+        <label for="filter-barang">
+          Cari Barang
+          <input
+            id="filter-barang"
+            type="search"
+            placeholder="Kode atau nama barang..."
+          >
+        </label>
+
+        <label for="filter-jenis">
+          Jenis Transaksi
+          <select id="filter-jenis">
+            <option value="">Semua</option>
+            <option value="masuk">Barang Masuk</option>
+            <option value="keluar">Barang Keluar</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="aksi">
+        <button id="reset-filter" class="sekunder" type="button">
+          Reset Filter
+        </button>
+        <button id="excel-riwayat" type="button">
+          Unduh Excel Sesuai Filter
+        </button>
+      </div>
+
+      <p class="catatan">
+        Excel berisi stok terkini seluruh barang dan riwayat sesuai filter.
+      </p>
+      <p id="jumlah-riwayat" role="status"></p>
+
+      <div class="tabel-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Tanggal</th>
+              <th>Barang</th>
+              <th>Jenis</th>
+              <th class="angka">Jumlah</th>
+              <th>Satuan</th>
+              <th>Keterangan</th>
+            </tr>
+          </thead>
+          <tbody id="daftar-riwayat"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>DAMAR · INVENTORY DAN STOCK</footer>
+
+  <script src="xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
