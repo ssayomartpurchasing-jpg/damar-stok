@@ -337,3 +337,5 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+.koneksi { max-width: 1100px; margin: 20px auto; padding: 20px 24px; }
+.koneksi button { margin: 6px 4px 6px 0; }
