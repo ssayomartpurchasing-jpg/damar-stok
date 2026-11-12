@@ -11,6 +11,7 @@
   --hijau-gelap: #193e32;
   --garis: #dce6df;
   --teks: #263c32;
+  --batas-sisi: max(24px, calc((100% - 1100px) / 2));
 }
 
 body {
@@ -22,7 +23,7 @@ body {
 }
 
 header {
-  padding: 18px max(24px, calc((100% - 1100px) / 2));
+  padding: 20px var(--batas-sisi);
   background: var(--hijau);
   color: white;
 }
@@ -40,17 +41,35 @@ header p {
   color: #dce9e3;
 }
 
+.koneksi {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 12px var(--batas-sisi);
+}
+
+.koneksi button {
+  max-width: 100%;
+}
+
+.koneksi p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 nav {
   display: flex;
   gap: 8px;
-  padding: 12px max(24px, calc((100% - 1100px) / 2));
+  padding: 10px var(--batas-sisi);
   background: white;
   border-bottom: 1px solid var(--garis);
   overflow-x: auto;
 }
 
 button {
-  padding: 11px 16px;
+  padding: 8px 14px;
   border: 1px solid var(--hijau);
   border-radius: 8px;
   background: var(--hijau);
@@ -91,10 +110,10 @@ nav button.aktif {
 }
 
 main {
-  width: calc(100% - 48px);
+  width: calc(100% - 2 * var(--batas-sisi));
   max-width: 1100px;
-  margin: 20px auto;
-  padding: 24px;
+  margin: 16px auto;
+  padding: 20px;
   border: 1px solid var(--garis);
   border-radius: 14px;
   background: white;
@@ -321,15 +340,8 @@ footer {
 }
 
 @media (max-width: 550px) {
-  header,
-  nav {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-
-  main {
-    width: calc(100% - 24px);
-    padding: 16px;
+  :root {
+    --batas-sisi: 16px;
   }
 
   .form-grid,
@@ -337,5 +349,3 @@ footer {
     grid-template-columns: 1fr;
   }
 }
-.koneksi { max-width: 1100px; margin: 20px auto; padding: 20px 24px; }
-.koneksi button { margin: 6px 4px 6px 0; }
