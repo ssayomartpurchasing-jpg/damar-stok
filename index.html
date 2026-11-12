@@ -13,14 +13,19 @@
     <p>INVENTORY DAN STOCK</p>
   </header>
 
-  <nav aria-label="Menu utama">
+  <aside class="koneksi">
+    <button id="muat-server" type="button" class="sekunder">Muat ulang data server</button>
+    <button id="ekspor-lokal" type="button" class="sekunder">Unduh cadangan localStorage lama</button>
+    <p id="status-server" role="status"></p>
+  </aside>
+  <nav aria-label="Menu utama" hidden>
     <button id="menu-stok" type="button">Stok Barang</button>
     <button id="menu-masuk" type="button">Barang Masuk</button>
     <button id="menu-keluar" type="button">Barang Keluar</button>
     <button id="menu-riwayat" type="button">Riwayat</button>
   </nav>
 
-  <main>
+  <main hidden>
     <!-- STOK BARANG -->
     <section id="bagian-stok">
       <h2>Stok Barang</h2>
@@ -35,14 +40,15 @@
       </div>
 
       <details>
-        <summary>Pulihkan Cadangan</summary>
+        <summary>Migrasi / Pulihkan Cadangan JSON</summary>
         <div class="isi-panel">
           <label for="file-cadangan">Pilih cadangan JSON:</label>
           <input id="file-cadangan" type="file" accept=".json">
           <p class="catatan">
-            Pemulihan mengganti seluruh data dengan isi cadangan.
+            Migrasi hanya mengisi database kosong setelah pratinjau dan konfirmasi. Data browser tetap utuh.
           </p>
           <p id="pesan-pemulihan" role="status"></p>
+          <div id="preview-migrasi" hidden><p id="ringkasan-migrasi"></p><div class="tabel-scroll"><table><thead><tr><th>Barcode</th><th>Nama</th><th>Stok</th><th>Satuan</th></tr></thead><tbody id="baris-migrasi"></tbody></table></div><button id="konfirmasi-migrasi" type="button">Konfirmasi Migrasi</button></div>
         </div>
       </details>
 
@@ -57,10 +63,11 @@
           <input id="file-master" type="file" accept=".xlsx">
 
           <p class="catatan">
-            Membaca sheet pertama. Kode yang sudah terdaftar dilewati.
+            Membaca sheet pertama: baris pertama judul, baris kedua BARCODE, NAMA ITEM, QTY, SATUAN. Barcode ganda ditolak.
             Stok awal impor tidak dicatat sebagai transaksi riwayat.
           </p>
           <p id="pesan-impor" role="status"></p>
+          <div id="preview-master" hidden><div class="tabel-scroll"><table><thead><tr><th>Barcode</th><th>Nama</th><th>Stok awal</th><th>Satuan</th></tr></thead><tbody id="baris-master"></tbody></table></div><button id="proses-master" type="button">Konfirmasi Simpan Master</button></div>
         </div>
       </details>
 
@@ -195,7 +202,7 @@
   <div class="isi-panel">
     <p class="catatan">
       Unggah banyak transaksi sekaligus menggunakan Excel.
-      Pilih template, isi data, lalu unggah kembali.
+      Baris pertama judul; baris kedua BARCODE, NAMA ITEM, QTY, SATUAN. Tanggal mengikuti form; barang keluar berarti penjualan. Format barcode sebagai teks agar nol depan tidak hilang.
     </p>
 
     <button id="template-transaksi" type="button">

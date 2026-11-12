@@ -98,49 +98,55 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  // Membaca data yang sudah tersimpan.
-  try {
-    const teks = localStorage.getItem(KUNCI_DATA);
-
-    if (teks !== null) {
-      const data = JSON.parse(teks);
-
-      const barang = Array.isArray(data) ? data : data?.barang;
-      const riwayat = Array.isArray(data) ? [] : data?.riwayat;
-
-      validasiData(barang, riwayat);
-
-      daftarBarang = barang;
-      riwayatTransaksi = riwayat;
-    }
-  } catch (error) {
-    penyimpananSiap = false;
-
-    alert(
-      "Data lama gagal dibaca: " + error.message +
-      "\nJangan hapus data browser. Kirim pesan ini untuk diperiksa."
-    );
-
-    return;
+  // Data lama tetap berada di browser dan tidak dimigrasikan otomatis.
+  let sedangMenyimpan = false;
+  let permintaanTertunda = null;
+  async function api(body) {
+    const response = await fetch('/api/inventory', {
+      method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
+      headers: body ? {'Content-Type':'application/json'} : {},
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Server menolak permintaan.');
+    return data;
   }
-
-  function simpanData(barangBaru, riwayatBaru = riwayatTransaksi) {
-    if (!penyimpananSiap) {
-      throw new Error("Penyimpanan belum siap.");
-    }
-
-    const gabungan = {
-      barang: barangBaru,
-      riwayat: riwayatBaru
-    };
-
-    // Ubah data di memori hanya setelah penyimpanan berhasil.
-    localStorage.setItem(KUNCI_DATA, JSON.stringify(gabungan));
-
-    daftarBarang = barangBaru;
-    riwayatTransaksi = riwayatBaru;
+  function terapkan(data) {
+    daftarBarang = data.barang; riwayatTransaksi = data.riwayat;
+    perbaruiTampilan();
   }
-
+  async function simpanServer(body) {
+    if (sedangMenyimpan) throw new Error('Permintaan sebelumnya sedang diproses.');
+    sedangMenyimpan = true;
+    const signature = JSON.stringify(body);
+    if (body.manual) {
+      if (!permintaanTertunda || permintaanTertunda.signature !== signature)
+        permintaanTertunda = {signature, id: crypto.randomUUID()};
+      body = {...body, requestId: permintaanTertunda.id};
+    }
+    ambil('status-server').textContent = 'Menyimpan ke server...';
+    try {
+      const data = await api(body);
+      terapkan(data); permintaanTertunda = null;
+      ambil('status-server').textContent = 'Data telah tersimpan di server.';
+    } catch(error) {
+      ambil('status-server').textContent = 'Belum ada konfirmasi penyimpanan. ' + error.message + ' Muat ulang data sebelum mencoba kembali.';
+      throw error;
+    } finally {sedangMenyimpan = false;}
+  }
+  async function muatServer() {
+    try {
+      terapkan(await api());
+      document.querySelector('main').hidden = false;
+      document.querySelector('nav').hidden = false;
+      ambil('status-server').textContent = 'Terhubung ke database.';
+    } catch(error) {
+      document.querySelector('main').hidden = true;
+      document.querySelector('nav').hidden = true;
+      ambil('status-server').textContent = error.message;
+    }
+  }
+  ambil('muat-server').onclick = muatServer;
   function barisKosong(tabel, jumlahKolom, pesan) {
     const baris = tabel.insertRow();
     const kolom = baris.insertCell();
@@ -341,6 +347,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     if (transaksiAktif) {
+      bersihkanPreviewImpor();
       jenisTransaksi = menu;
 
       ambil("judul-transaksi").textContent =
@@ -390,7 +397,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // TAMBAH BARANG
-  ambil("form-barang").addEventListener("submit", function (event) {
+  ambil("form-barang").addEventListener("submit", async function (event) {
     event.preventDefault();
 
     const pesan = ambil("pesan-barang");
@@ -420,7 +427,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     try {
-      simpanData([...daftarBarang, { kode, nama, satuan, stok }]);
+      await simpanServer({mode:"items", manual:true, barang:[{kode,nama,satuan,stok}]});
     } catch (error) {
       pesan.textContent = "Gagal menyimpan. Data belum ditambahkan.";
       console.error(error);
@@ -435,7 +442,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // SIMPAN TRANSAKSI
-  ambil("form-transaksi").addEventListener("submit", function (event) {
+  ambil("form-transaksi").addEventListener("submit", async function (event) {
     event.preventDefault();
 
     const pesan = ambil("pesan-transaksi");
@@ -488,7 +495,7 @@ document.addEventListener("DOMContentLoaded", function () {
     };
 
     try {
-      simpanData(dataBaru, [...riwayatTransaksi, catatan]);
+      await simpanServer({mode:"transactions", manual:true, riwayat:[catatan]});
     } catch (error) {
       pesan.textContent = "Gagal menyimpan. Stok belum berubah.";
       console.error(error);
@@ -501,7 +508,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     pesan.textContent =
       "Tersimpan. Stok " + barang.nama + " sekarang " +
-      angka(stokBaru) + " " + barang.satuan + ".";
+      angka(daftarBarang.find(x=>x.kode===kode).stok) + " " + barang.satuan + ".";
   });
 
   // EKSPOR EXCEL
@@ -599,506 +606,93 @@ document.addEventListener("DOMContentLoaded", function () {
     eksporExcel(true);
   });
 
-  // TEMPLATE MASTER
-  ambil("template-master").addEventListener("click", function () {
-    try {
-      pastikanExcel();
-
-      const sheet = XLSX.utils.aoa_to_sheet([
-        ["Kode / Barcode", "Nama Barang", "Satuan", "Stok Awal"]
-      ]);
-
-      sheet["!cols"] = [
-        { wch: 24 }, { wch: 35 }, { wch: 15 }, { wch: 15 }
-      ];
-
-      const buku = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(buku, sheet, "Master Barang");
-      XLSX.writeFile(buku, "Template-Master-DAMAR.xlsx");
-    } catch (error) {
-      alert(error.message);
-    }
-  });
-
-  // IMPOR MASTER
-  ambil("file-master").addEventListener("change", async function (event) {
-    const input = event.target;
-    const file = input.files[0];
-    const pesan = ambil("pesan-impor");
-
-    if (!file) return;
-
-    input.disabled = true;
-    pesan.textContent = "Membaca Excel...";
-
-    try {
-      pastikanExcel();
-
-      if (file.size > 10 * 1024 * 1024) {
-        throw new Error("Ukuran file maksimal 10 MB.");
-      }
-
-      const buku = XLSX.read(await file.arrayBuffer(), {
-        type: "array"
-      });
-
-      const namaSheet = buku.SheetNames[0];
-
-      if (!namaSheet) throw new Error("File tidak memiliki sheet.");
-
-      const barisExcel = XLSX.utils.sheet_to_json(
-        buku.Sheets[namaSheet],
-        {
-          header: 1,
-          defval: "",
-          raw: true,
-          blankrows: true
-        }
-      );
-
-      if (!barisExcel.length) throw new Error("Sheet pertama kosong.");
-
-      const header = barisExcel[0].map(function (isi) {
-        return String(isi).trim().toLowerCase();
-      });
-
-      const posisi = [
-        "kode / barcode", "nama barang", "satuan", "stok awal"
-      ].map((judul) => header.indexOf(judul));
-
-      if (posisi.includes(-1)) {
-        throw new Error("Judul kolom tidak sesuai. Gunakan template.");
-      }
-
-      const kodeTerpakai = new Set(
-        daftarBarang.map((barang) => barang.kode.toLowerCase())
-      );
-
-      const tambahan = [];
-      let dilewati = 0;
-
-      for (let i = 1; i < barisExcel.length; i++) {
-        const baris = barisExcel[i] || [];
-
-        if (baris.every((isi) => String(isi).trim() === "")) {
-          continue;
-        }
-
-        const kode = String(baris[posisi[0]] ?? "").trim();
-        const nama = String(baris[posisi[1]] ?? "").trim();
-        const satuan = String(baris[posisi[2]] ?? "").trim().toUpperCase();
-        const isiStok = baris[posisi[3]];
-        const stok = isiStok === "" || isiStok == null ? 0 : isiStok;
-
-        if (!kode) {
-          throw new Error("Kode kosong pada baris " + (i + 1) + ".");
-        }
-
-        if (kodeTerpakai.has(kode.toLowerCase())) {
-          dilewati++;
-          continue;
-        }
-
-        if (!nama || !satuan) {
-          throw new Error(
-            "Nama atau satuan kosong pada baris " + (i + 1) + "."
-          );
-        }
-
-        if (
-          typeof stok !== "number" ||
-          !Number.isFinite(stok) ||
-          stok < 0
-        ) {
-          throw new Error(
-            "Stok baris " + (i + 1) + " harus angka Excel minimal nol."
-          );
-        }
-
-        tambahan.push({ kode, nama, satuan, stok });
-        kodeTerpakai.add(kode.toLowerCase());
-      }
-
-      if (!tambahan.length) {
-        pesan.textContent =
-          "Tidak ada barang baru. " + dilewati + " kode dilewati.";
-        return;
-      }
-
-      simpanData([...daftarBarang, ...tambahan]);
-      ambil("cari-barang").value = "";
-      perbaruiTampilan();
-
-      pesan.textContent =
-        "Berhasil! " + tambahan.length + " barang ditambahkan. " +
-        dilewati + " kode dilewati.";
-    } catch (error) {
-      pesan.textContent = "Impor gagal: " + error.message;
-      console.error(error);
-    } finally {
-      input.disabled = false;
-      input.value = "";
-    }
-  });
-
-  // ==========================================
-  // IMPORT TRANSAKSI MASSAL DARI EXCEL
-  // ==========================================
-
+  // Excel: judul di baris pertama, empat kolom di baris kedua.
   let dataImporTransaksi = [];
-
-  function tanggalDariExcel(nilai) {
-    if (nilai instanceof Date && !isNaN(nilai)) {
-      return [
-        nilai.getFullYear(),
-        String(nilai.getMonth() + 1).padStart(2, "0"),
-        String(nilai.getDate()).padStart(2, "0")
-      ].join("-");
-    }
-
-    if (typeof nilai === "number") {
-      const t = XLSX.SSF.parse_date_code(nilai);
-      if (!t) return "";
-      return [
-        t.y,
-        String(t.m).padStart(2, "0"),
-        String(t.d).padStart(2, "0")
-      ].join("-");
-    }
-
-    const teks = String(nilai ?? "").trim();
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(teks)) {
-      return tanggalValid(teks) ? teks : "";
-    }
-
-    const cocok = teks.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-
-    if (cocok) {
-      const tanggal =
-        cocok[3] + "-" +
-        cocok[2].padStart(2, "0") + "-" +
-        cocok[1].padStart(2, "0");
-
-      return tanggalValid(tanggal) ? tanggal : "";
-    }
-
-    return "";
-  }
-
+  let imporDisiapkan = null;
   function bersihkanPreviewImpor() {
-    dataImporTransaksi = [];
-    ambil("daftar-pratinjau-impor").replaceChildren();
-    ambil("pratinjau-impor").hidden = true;
-    ambil("proses-impor-transaksi").disabled = true;
-    ambil("file-transaksi").value = "";
+    dataImporTransaksi = []; imporDisiapkan = null;
+    ambil('pratinjau-impor').hidden = true;
+    ambil('proses-impor-transaksi').disabled = true;
   }
-
-  // DOWNLOAD TEMPLATE
-  ambil("template-transaksi").addEventListener("click", function () {
-    try {
-      pastikanExcel();
-
-      const sheet = XLSX.utils.aoa_to_sheet([
-        ["Tanggal", "Kode / Barcode", "Jumlah", "Keterangan"],
-        ["2026-11-12", "BRG001", 10, "Pembelian supplier"],
-        ["2026-11-12", "BRG002", 5, "Nomor dokumen 001"]
-      ]);
-
-      sheet["!cols"] = [
-        { wch: 18 },
-        { wch: 24 },
-        { wch: 15 },
-        { wch: 35 }
-      ];
-
-      const buku = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(buku, sheet, "Transaksi");
-
-      XLSX.writeFile(
-        buku,
-        "Template-Transaksi-DAMAR.xlsx"
-      );
-    } catch (error) {
-      alert("Gagal membuat template: " + error.message);
+  function template(id,nama) {
+    ambil(id).onclick=()=>{
+      const sheet=XLSX.utils.aoa_to_sheet([[nama],['BARCODE','NAMA ITEM','QTY','SATUAN'],['001234','Contoh barang',1,'PCS']]);
+      sheet['!cols']=[{wch:24},{wch:35},{wch:16},{wch:16}];
+      const book=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book,sheet,'Data');
+      XLSX.writeFile(book,'Template-'+nama+'.xlsx');
+    };
+  }
+  template('template-master','Master DAMAR'); template('template-transaksi','Transaksi DAMAR');
+  async function bacaExcel(file,master) {
+    if(file.size>10*1024*1024) throw new Error('File maksimal 10 MB.');
+    const book=XLSX.read(await file.arrayBuffer(),{type:'array'});
+    const sheet=book.Sheets[book.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:'',blankrows:true});
+    if(!rows[0]?.some(x=>String(x).trim())) throw new Error('Judul baris pertama wajib diisi.');
+    const headers=(rows[1]||[]).map(x=>String(x).trim().toUpperCase());
+    const cols=['BARCODE','NAMA ITEM','QTY','SATUAN'].map(x=>headers.indexOf(x));
+    if(cols.includes(-1)) throw new Error('Baris kedua harus BARCODE, NAMA ITEM, QTY, SATUAN.');
+    const hasil=[];
+    for(let i=2;i<rows.length;i++) {
+      const row=rows[i]; if(row.every(x=>String(x).trim()==='')) continue;
+      const cell=sheet[XLSX.utils.encode_cell({r:i,c:cols[0]})];
+      const kode=String(cell?.w ?? cell?.v ?? '').trim();
+      const nama=String(row[cols[1]]).trim(); const jumlah=row[cols[2]];
+      const satuan=String(row[cols[3]]).trim();
+      const barang=daftarBarang.find(x=>x.kode.toLowerCase()===kode.toLowerCase());
+      if(!kode||!nama||!satuan||typeof jumlah!=='number'||!Number.isFinite(jumlah)||jumlah<(master?0:.001)) throw new Error('Baris '+(i+1)+': barcode, nama, QTY atau satuan tidak valid.');
+      if(!master && !barang) throw new Error('Baris '+(i+1)+': barcode tidak ditemukan: '+kode);
+      if(!master && barang.satuan.toLowerCase()!==satuan.toLowerCase()) throw new Error('Baris '+(i+1)+': satuan berbeda dengan master.');
+      hasil.push(master?{kode,nama,satuan,stok:jumlah}:{kode:barang.kode,nama:barang.nama,satuan:barang.satuan,jumlah,tanggal:ambil('tanggal-transaksi').value,jenis:jenisTransaksi,keterangan:'Impor Excel'});
     }
-  });
-
-  // BACA FILE EXCEL DAN TAMPILKAN PREVIEW
-  ambil("file-transaksi").addEventListener(
-    "change",
-    async function (event) {
-      const input = event.target;
-      const file = input.files[0];
-      const pesan = ambil("pesan-impor-transaksi");
-
-      bersihkanPreviewImpor();
-
-      if (!file) return;
-
-      input.disabled = true;
-      pesan.textContent = "Memeriksa file Excel...";
-
+    if(!hasil.length) throw new Error('Tidak ada baris data.');
+    return master?{mode:'items',barang:hasil}:{mode:'transactions',riwayat:hasil};
+  }
+  function tampilPreview(target,body) {
+    target.replaceChildren();
+    const rows=body.barang||body.riwayat;
+    for(const x of rows) {
+      const tr=target.insertRow();
+      for(const v of [x.kode,x.nama,x.stok??x.jumlah,x.satuan]) tr.insertCell().textContent=v;
+    }
+  }
+  for(const master of [true,false]) {
+    const input=ambil(master?'file-master':'file-transaksi');
+    const pesan=ambil(master?'pesan-impor':'pesan-impor-transaksi');
+    input.onchange=async()=>{
+      const file=input.files[0]; if(!file)return;
+      input.disabled=true; pesan.textContent='Memvalidasi seluruh impor di server...';
+      if(master) {ambil('preview-master').hidden=true; masterSiap=null;} else bersihkanPreviewImpor();
       try {
-        pastikanExcel();
-
-        if (file.size > 10 * 1024 * 1024) {
-          throw new Error("Ukuran file maksimal 10 MB.");
+        const body=await bacaExcel(file,master);
+        await api({...body,preview:true});
+        if(master) {
+          masterSiap=body; tampilPreview(ambil('baris-master'),body); ambil('preview-master').hidden=false;
+        } else {
+          imporDisiapkan=body; dataImporTransaksi=body.riwayat;
+          // Existing preview uses seven columns.
+          const table=ambil('daftar-pratinjau-impor'); table.replaceChildren();
+          body.riwayat.forEach((x,i)=>{const tr=table.insertRow(); [i+3,x.tanggal,x.kode,x.nama,x.jumlah,x.satuan,'Valid'].forEach(v=>tr.insertCell().textContent=v);});
+          ambil('pratinjau-impor').hidden=false; ambil('proses-impor-transaksi').disabled=false;
+          ambil('ringkasan-impor').textContent=body.riwayat.length+' transaksi valid. Jenis: '+jenisTransaksi;
         }
-
-        const buku = XLSX.read(await file.arrayBuffer(), {
-          type: "array",
-          cellDates: true
-        });
-
-        const namaSheet = buku.SheetNames[0];
-
-        if (!namaSheet) {
-          throw new Error("Sheet Excel tidak ditemukan.");
-        }
-
-        const baris = XLSX.utils.sheet_to_json(
-          buku.Sheets[namaSheet],
-          {
-            header: 1,
-            defval: "",
-            raw: true,
-            blankrows: false
-          }
-        );
-
-        if (baris.length < 2) {
-          throw new Error("Tidak ada transaksi di dalam Excel.");
-        }
-
-        if (baris.length - 1 > 5000) {
-          throw new Error("Maksimal 5.000 transaksi sekali impor.");
-        }
-
-        const header = baris[0].map(x =>
-          String(x).trim().toLowerCase()
-        );
-
-        const kolom = [
-          "tanggal",
-          "kode / barcode",
-          "jumlah",
-          "keterangan"
-        ].map(x => header.indexOf(x));
-
-        if (kolom.some(x => x < 0)) {
-          throw new Error(
-            "Judul kolom tidak sesuai. Silakan unduh template."
-          );
-        }
-
-        const hasil = [];
-
-        for (let i = 1; i < baris.length; i++) {
-          const row = baris[i];
-
-          const tanggal = tanggalDariExcel(row[kolom[0]]);
-          const kode = String(row[kolom[1]] ?? "").trim();
-          const jumlah = Number(row[kolom[2]]);
-          const keterangan = String(row[kolom[3]] ?? "").trim();
-
-          if (!tanggal || !kode || !Number.isFinite(jumlah) || jumlah <= 0) {
-            hasil.push({
-              baris: i + 1,
-              tanggal: tanggal || "-",
-              kode: kode || "-",
-              nama: "-",
-              jumlah: Number.isFinite(jumlah) ? jumlah : 0,
-              keterangan,
-              valid: false,
-              status: "Data tidak valid"
-            });
-            continue;
-          }
-
-          const barang = daftarBarang.find(
-            x => x.kode.toLowerCase() === kode.toLowerCase()
-          );
-
-          if (!barang) {
-            hasil.push({
-              baris: i + 1,
-              tanggal,
-              kode,
-              nama: "-",
-              jumlah,
-              keterangan,
-              valid: false,
-              status: "Kode barang tidak ditemukan"
-            });
-            continue;
-          }
-
-          hasil.push({
-            baris: i + 1,
-            tanggal,
-            kode: barang.kode,
-            nama: barang.nama,
-            jumlah,
-            satuan: barang.satuan,
-            keterangan,
-            valid: true,
-            status: "Siap diimpor"
-          });
-        }
-
-        // Periksa total barang keluar agar stok tidak minus.
-        if (jenisTransaksi === "keluar") {
-          const totalKeluar = {};
-
-          hasil.forEach(x => {
-            if (x.valid) {
-              totalKeluar[x.kode] =
-                (totalKeluar[x.kode] || 0) + x.jumlah;
-            }
-          });
-
-          hasil.forEach(x => {
-            if (
-              x.valid &&
-              totalKeluar[x.kode] >
-                daftarBarang.find(b => b.kode === x.kode).stok
-            ) {
-              x.valid = false;
-              x.status = "Total keluar melebihi stok";
-            }
-          });
-        }
-
-        dataImporTransaksi = hasil;
-
-        const tabel = ambil("daftar-pratinjau-impor");
-        tabel.replaceChildren();
-
-        hasil.forEach(x => {
-          const tr = tabel.insertRow();
-
-          [
-            x.baris,
-            x.tanggal,
-            x.kode,
-            x.nama,
-            angka(x.jumlah),
-            x.keterangan || "-",
-            x.status
-          ].forEach((nilai, index) => {
-            const td = tr.insertCell();
-            td.textContent = nilai;
-
-            if (index === 4) td.className = "angka";
-          });
-        });
-
-        const berhasil = hasil.filter(x => x.valid).length;
-        const gagal = hasil.length - berhasil;
-
-        ambil("ringkasan-impor").textContent =
-          hasil.length + " transaksi dibaca. " +
-          berhasil + " valid, " + gagal + " bermasalah.";
-
-        ambil("pratinjau-impor").hidden = false;
-        ambil("proses-impor-transaksi").disabled =
-          gagal > 0 || berhasil === 0;
-
-        pesan.textContent = gagal > 0
-          ? "Perbaiki baris yang bermasalah di Excel, lalu unggah kembali."
-          : "Semua transaksi valid dan siap disimpan.";
-
-      } catch (error) {
-        pesan.textContent = "Impor gagal: " + error.message;
-        console.error(error);
-        bersihkanPreviewImpor();
-      } finally {
-        input.disabled = false;
-      }
-    }
-  );
-
-  // SIMPAN SEMUA TRANSAKSI SEKALIGUS
-  ambil("proses-impor-transaksi").addEventListener(
-    "click",
-    function () {
-      const pesan = ambil("pesan-impor-transaksi");
-
-      if (
-        dataImporTransaksi.length === 0 ||
-        dataImporTransaksi.some(x => !x.valid)
-      ) {
-        pesan.textContent = "Periksa kembali data Excel.";
-        return;
-      }
-
-      try {
-        const perubahanStok = {};
-
-        dataImporTransaksi.forEach(x => {
-          const perubahan =
-            jenisTransaksi === "masuk" ? x.jumlah : -x.jumlah;
-
-          perubahanStok[x.kode] =
-            (perubahanStok[x.kode] || 0) + perubahan;
-        });
-
-        const barangBaru = daftarBarang.map(barang => {
-          const perubahan = perubahanStok[barang.kode] || 0;
-
-          return {
-            ...barang,
-            stok: Math.round(
-              (barang.stok + perubahan) * 1000
-            ) / 1000
-          };
-        });
-
-        const riwayatBaru = [
-          ...riwayatTransaksi,
-          ...dataImporTransaksi.map(x => ({
-            tanggal: x.tanggal,
-            kode: x.kode,
-            nama: x.nama,
-            jenis: jenisTransaksi,
-            jumlah: x.jumlah,
-            satuan: x.satuan,
-            keterangan: x.keterangan
-          }))
-        ];
-
-        // Simpan seluruh transaksi dalam satu proses.
-        simpanData(barangBaru, riwayatBaru);
-
-        const jumlahBerhasil = dataImporTransaksi.length;
-
-        bersihkanPreviewImpor();
-        perbaruiTampilan();
-
-        pesan.textContent =
-          "Berhasil mengimpor " + jumlahBerhasil +
-          " transaksi " +
-          (jenisTransaksi === "masuk" ? "masuk." : "keluar.");
-
-      } catch (error) {
-        pesan.textContent =
-          "Gagal menyimpan transaksi: " + error.message;
-        console.error(error);
-      }
-    }
-  );
-
-  // BATAL IMPORT
-  ambil("batal-impor-transaksi").addEventListener(
-    "click",
-    function () {
-      bersihkanPreviewImpor();
-      ambil("pesan-impor-transaksi").textContent =
-        "Impor dibatalkan.";
-    }
-  );
-
+        pesan.textContent='Seluruh data valid. Periksa pratinjau lalu konfirmasi penyimpanan.';
+      } catch(e) {pesan.textContent='Impor belum tersimpan: '+e.message;}
+      finally {input.disabled=false;input.value='';}
+    };
+  }
+  let masterSiap=null;
+  ambil('proses-master').onclick=async()=>{
+    if(!masterSiap)return;
+    try {await simpanServer(masterSiap); masterSiap=null; ambil('preview-master').hidden=true; ambil('pesan-impor').textContent='Master tersimpan.';}
+    catch(e){ambil('pesan-impor').textContent='Belum tersimpan: '+e.message;}
+  };
+  ambil('proses-impor-transaksi').onclick=async()=>{
+    if(!imporDisiapkan)return;
+    try {await simpanServer(imporDisiapkan);bersihkanPreviewImpor();ambil('pesan-impor-transaksi').textContent='Seluruh transaksi tersimpan.';}
+    catch(e){ambil('pesan-impor-transaksi').textContent='Belum tersimpan: '+e.message;}
+  };
+  ambil('batal-impor-transaksi').onclick=bersihkanPreviewImpor;
 
   // CADANGKAN DATA
   ambil("cadangkan-data").addEventListener("click", function () {
@@ -1139,62 +733,42 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 1000);
   });
 
-  // PULIHKAN DATA
-  ambil("file-cadangan").addEventListener("change", async function (event) {
-    const input = event.target;
-    const file = input.files[0];
-    const pesan = ambil("pesan-pemulihan");
-
-    if (!file) return;
-
-    input.disabled = true;
-    pesan.textContent = "Memeriksa cadangan...";
-
+  // Migrasi eksplisit, tanpa mengubah localStorage dan tanpa menimpa database.
+  let migrasiSiap=null;
+  ambil('file-cadangan').onchange=async event=>{
+    migrasiSiap=null; ambil('preview-migrasi').hidden=true;
+    const file=event.target.files[0]; if(!file)return;
     try {
-      if (file.size > 20 * 1024 * 1024) {
-        throw new Error("Ukuran cadangan maksimal 20 MB.");
-      }
-
-      const cadangan = JSON.parse(await file.text());
-
-      if (
-        !cadangan ||
-        cadangan.aplikasi !== "Damar Stok" ||
-        cadangan.versi !== 1
-      ) {
-        throw new Error("Bukan cadangan aplikasi yang sesuai.");
-      }
-
-      validasiData(cadangan.barang, cadangan.riwayat);
-
-      const lanjut = confirm(
-        "Cadangan berisi " + cadangan.barang.length + " barang dan " +
-        cadangan.riwayat.length + " transaksi.\n\n" +
-        "Seluruh data saat ini akan DIGANTI.\n" +
-        "Pastikan sudah menyimpan cadangan terbaru.\n\nLanjutkan?"
-      );
-
-      if (!lanjut) {
-        pesan.textContent = "Dibatalkan. Data tidak berubah.";
-        return;
-      }
-
-      simpanData(cadangan.barang, cadangan.riwayat);
-    } catch (error) {
-      pesan.textContent =
-        "Pemulihan gagal. Data tidak diganti. " + error.message;
-      console.error(error);
-      return;
-    } finally {
-      input.disabled = false;
-      input.value = "";
-    }
-
-    alert("Data berhasil dipulihkan.");
-    window.location.reload();
-  });
-
+      if(file.size>5*1024*1024)throw new Error('Cadangan maksimal 5 MB.');
+      const data=JSON.parse(await file.text());
+      if(data.aplikasi!=='Damar Stok'||data.versi!==1)throw new Error('Format cadangan tidak sesuai.');
+      validasiData(data.barang,data.riwayat);
+      const body={mode:'migration',barang:data.barang,riwayat:data.riwayat};
+      await api({...body,preview:true}); migrasiSiap=body;
+      tampilPreview(ambil('baris-migrasi'),body);
+      ambil('ringkasan-migrasi').textContent=data.barang.length+' barang, '+data.riwayat.length+' riwayat. Stok cadangan dipertahankan; riwayat tidak dihitung ulang.';
+      ambil('preview-migrasi').hidden=false;
+      ambil('pesan-pemulihan').textContent='Pratinjau valid. Konfirmasi untuk mengisi database kosong.';
+    } catch(e){ambil('pesan-pemulihan').textContent='Migrasi belum tersimpan: '+e.message;}
+    finally {event.target.value='';}
+  };
+  ambil('konfirmasi-migrasi').onclick=async()=>{
+    if(!migrasiSiap || !confirm('Simpan cadangan ini ke database kosong?'))return;
+    try {await simpanServer(migrasiSiap);migrasiSiap=null;ambil('preview-migrasi').hidden=true;ambil('pesan-pemulihan').textContent='Migrasi tersimpan di database.';}
+    catch(e){ambil('pesan-pemulihan').textContent='Migrasi belum tersimpan: '+e.message;}
+  };
+  ambil('ekspor-lokal').onclick=()=>{
+    const lama=localStorage.getItem(KUNCI_DATA);
+    if(!lama){alert('Tidak ada data lama di browser ini.');return;}
+    try {
+      const data=JSON.parse(lama);const barang=Array.isArray(data)?data:data.barang;const riwayat=Array.isArray(data)?[]:data.riwayat;
+      validasiData(barang,riwayat);
+      const url=URL.createObjectURL(new Blob([JSON.stringify({aplikasi:'Damar Stok',versi:1,barang,riwayat})],{type:'application/json'}));
+      const a=document.createElement('a');a.href=url;a.download='Cadangan-DAMAR-lokal.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch(e){alert('Cadangan lokal tidak dapat dibaca: '+e.message);}
+  };
   // TAMPILAN AWAL
   perbaruiTampilan();
   bukaMenu("stok");
+  muatServer();
 });
