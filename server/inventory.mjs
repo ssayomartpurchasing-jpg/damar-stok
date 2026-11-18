@@ -7,7 +7,7 @@ export function normalize(body) {
  const mode=body.mode;
  if (!['items','transactions','migration'].includes(mode)) fail('Operasi tidak valid.');
  const array=(v,max=5000) => Array.isArray(v) && v.length <= max ? v : fail('Data terlalu banyak atau tidak valid.');
- const items=mode==='transactions' ? [] : array(body.barang).map(x=>({kode:text(x.kode),nama:text(x.nama),satuan:text(x.satuan),stok:qty(x.stok,true),aktif:mode==='migration' && x.aktif===false ? false : true}));
+ const items=mode==='transactions' ? [] : array(body.barang).map(x=>({kode:text(x.kode),nama:text(x.nama),satuan:text(x.satuan),stok:qty(x.stok,true),aktif:mode==='migration' && (x.aktif===false || x.dihapus===true) ? false : true,dihapus:mode==='migration' && x.dihapus===true}));
  const seen=new Set();
  for(const x of items) { const k=x.kode.toLowerCase(); if(seen.has(k)) fail('Barcode ganda: '+x.kode); seen.add(k); }
  const rows=mode==='items' ? [] : array(body.riwayat,mode==='migration'?50000:5000).map(x=>{
@@ -25,9 +25,10 @@ export function normalize(body) {
  return {...content,fingerprint:createHash('sha256').update(JSON.stringify(content)).digest('hex')};
 }
 export async function snapshot(client) {
- const barang=(await client.query('SELECT i.kode,i.nama,i.satuan,i.stok,i.aktif,EXISTS(SELECT 1 FROM damar_history h WHERE h.kode=i.kode) AS memiliki_riwayat FROM damar_items i ORDER BY i.kode')).rows.map(x=>({...x,stok:Number(x.stok)}));
+ const barang=(await client.query('SELECT i.kode,i.nama,i.satuan,i.stok,i.aktif,EXISTS(SELECT 1 FROM damar_history h WHERE h.kode=i.kode) AS memiliki_riwayat FROM damar_items i WHERE NOT i.dihapus ORDER BY i.kode')).rows.map(x=>({...x,stok:Number(x.stok)}));
  const riwayat=(await client.query("SELECT kode,nama,satuan,to_char(tanggal,'YYYY-MM-DD') AS tanggal,jenis,jumlah,keterangan FROM damar_history ORDER BY id")).rows.map(x=>({...x,jumlah:Number(x.jumlah)}));
- return {barang,riwayat};
+ const arsip=(await client.query('SELECT kode,nama,satuan,stok,aktif,dihapus FROM damar_items WHERE dihapus ORDER BY kode')).rows.map(x=>({...x,stok:Number(x.stok)}));
+ return {barang,riwayat,arsip};
 }
 export async function execute(client, body, actor, preview=false) {
  if (['edit','delete','activate','deactivate'].includes(body?.mode)) return manageItem(client,body,preview);
@@ -39,22 +40,23 @@ export async function execute(client, body, actor, preview=false) {
   if((await client.query('SELECT 1 FROM damar_batches WHERE fingerprint=$1',[data.fingerprint])).rows.length) throw new InputError('Impor/transaksi yang sama sudah tersimpan. Muat ulang data.',409);
   if(data.mode==='migration' && (await client.query('SELECT 1 FROM damar_items LIMIT 1')).rows.length) throw new InputError('Migrasi hanya untuk database kosong. Data yang ada tidak ditimpa.',409);
   await client.query('INSERT INTO damar_batches(fingerprint,actor) VALUES ($1,$2)',[data.fingerprint,actor]);
-  for(const x of data.barang) await client.query('INSERT INTO damar_items(kode,nama,satuan,stok,aktif) VALUES ($1,$2,$3,$4,$5)',[x.kode,x.nama,x.satuan,x.stok,x.aktif]);
+  for(const x of data.barang) await client.query('INSERT INTO damar_items(kode,nama,satuan,stok,aktif,dihapus) VALUES ($1,$2,$3,$4,$5,$6)',[x.kode,x.nama,x.satuan,x.stok,x.aktif,x.dihapus]);
   for(const x of data.riwayat) {
    const item=(await client.query('SELECT * FROM damar_items WHERE lower(kode)=lower($1) FOR UPDATE',[x.kode])).rows[0];
    if(!item) fail('Barcode tidak ditemukan: '+x.kode);
+   if(item.dihapus && data.mode!=='migration') fail('Barang sudah dihapus dari master: '+item.kode);
    if(!item.aktif && data.mode!=='migration') fail('Barang nonaktif: '+item.kode);
    if(item.satuan.toLowerCase()!==x.satuan.toLowerCase()) fail('Satuan berbeda: '+x.kode);
    if(data.mode!=='migration') {
     const result=await client.query('UPDATE damar_items SET stok=stok+$1 WHERE kode=$2 AND stok+$1>=0 RETURNING stok',[x.jenis==='masuk'?x.jumlah:-x.jumlah,item.kode]);
     if(!result.rows.length) fail('Stok tidak cukup: '+item.kode);
    }
-   await client.query('INSERT INTO damar_history(kode,nama,satuan,tanggal,jenis,jumlah,keterangan,actor,batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[item.kode,item.nama,item.satuan,x.tanggal,x.jenis,x.jumlah,x.keterangan,actor,data.fingerprint]);
+   await client.query('INSERT INTO damar_history(kode,nama,satuan,tanggal,jenis,jumlah,keterangan,actor,batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[item.kode,data.mode==='migration'?x.nama:item.nama,data.mode==='migration'?x.satuan:item.satuan,x.tanggal,x.jenis,x.jumlah,x.keterangan,actor,data.fingerprint]);
   }
   const state=await snapshot(client);
   await client.query(preview?'ROLLBACK':'COMMIT');
   return {...state,preview,fingerprint:data.fingerprint};
- } catch(error) { await client.query('ROLLBACK'); if(error.code==='23505') throw new InputError('Barcode atau impor sudah terdaftar.',409); throw error; }
+ } catch(error) { await client.query('ROLLBACK'); if(error.code==='23505') throw new InputError('Barcode atau impor sudah terdaftar (termasuk barcode arsip yang memiliki riwayat).',409); throw error; }
 }
 
 // Use the same write lock as transactions/imports; re-check every condition after locking.
@@ -63,7 +65,7 @@ async function manageItem(client, body, preview) {
  await client.query('BEGIN');
  try {
   await client.query('LOCK TABLE damar_items IN EXCLUSIVE MODE');
-  const item=(await client.query('SELECT * FROM damar_items WHERE kode=$1 FOR UPDATE',[original])).rows[0];
+  const item=(await client.query('SELECT * FROM damar_items WHERE kode=$1 AND NOT dihapus FOR UPDATE',[original])).rows[0];
   if(!item) throw new InputError('Barang tidak ditemukan. Muat ulang data.',404);
   const history=(await client.query('SELECT 1 FROM damar_history WHERE kode=$1 LIMIT 1',[item.kode])).rows.length>0;
   if(body.mode==='edit') {
@@ -73,8 +75,10 @@ async function manageItem(client, body, preview) {
    if(history && satuan!==item.satuan) fail('Satuan tidak dapat diubah karena barang memiliki riwayat transaksi.');
    await client.query('UPDATE damar_items SET kode=$1,nama=$2,satuan=$3 WHERE kode=$4',[kode,nama,satuan,item.kode]);
   } else if(body.mode==='delete') {
-   if(Number(item.stok)!==0 || history) fail('Hapus ditolak: stok harus nol dan barang belum memiliki riwayat transaksi.');
-   await client.query('DELETE FROM damar_items WHERE kode=$1',[item.kode]);
+   if(Number(item.stok)!==0) fail('Hapus ditolak: stok harus nol.');
+   // Keep the referenced record for history, but exclude it from every master list.
+   if(history) await client.query('UPDATE damar_items SET dihapus=true,aktif=false WHERE kode=$1',[item.kode]);
+   else await client.query('DELETE FROM damar_items WHERE kode=$1',[item.kode]);
   } else {
    if(body.mode==='deactivate' && Number(item.stok)!==0) fail('Nonaktifkan ditolak: stok harus nol.');
    await client.query('UPDATE damar_items SET aktif=$1 WHERE kode=$2',[body.mode==='activate',item.kode]);
@@ -84,7 +88,7 @@ async function manageItem(client, body, preview) {
   return state;
  } catch(error) {
   await client.query('ROLLBACK');
-  if(error.code==='23505') throw new InputError('Barcode sudah terdaftar, termasuk pada barang nonaktif.',409);
+  if(error.code==='23505') throw new InputError('Barcode sudah terdaftar, termasuk barang nonaktif atau arsip yang memiliki riwayat.',409);
   throw error;
  }
 }

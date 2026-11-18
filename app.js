@@ -5,6 +5,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const KUNCI_DATA = "damar-stok-barang-v1";
 
   let daftarBarang = [];
+  let arsipBarang = [];
   let riwayatTransaksi = [];
   let jenisTransaksi = "masuk";
   let penyimpananSiap = true;
@@ -113,6 +114,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   function terapkan(data) {
     daftarBarang = data.barang; riwayatTransaksi = data.riwayat;
+    arsipBarang = data.arsip || [];
     perbaruiTampilan();
   }
   async function simpanServer(body) {
@@ -210,7 +212,7 @@ document.addEventListener("DOMContentLoaded", function () {
       tombol('Edit', () => bukaEdit(barang));
       if (barang.aktif === false) tombol('Aktifkan kembali', () => ubahStatus(barang,'activate'));
       else if (barang.stok === 0 && barang.memiliki_riwayat) tombol('Nonaktifkan', () => ubahStatus(barang,'deactivate'));
-      if (barang.stok === 0 && !barang.memiliki_riwayat) tombol('Hapus', () => ubahStatus(barang,'delete'));
+      if (barang.stok === 0) tombol('Hapus dari Master', () => ubahStatus(barang,'delete'));
     });
   }
 
@@ -240,12 +242,12 @@ document.addEventListener("DOMContentLoaded", function () {
     finally {ambil('simpan-edit').disabled=false;}
   };
   async function ubahStatus(barang,mode) {
-    if(mode==='delete' && !confirm('Hapus permanen barang "'+barang.nama+'" dengan barcode "'+barang.kode+'"?')) return;
+    if(mode==='delete' && !confirm('Hapus barang "'+barang.nama+'" (barcode "'+barang.kode+'") dari master? Riwayat tetap tersimpan. Barang tidak muncul lagi pada semua filter master. Jika memiliki riwayat, barcode tidak dapat digunakan kembali.')) return;
     if(mode==='deactivate' && !confirm('Nonaktifkan barang "'+barang.nama+'" dengan barcode "'+barang.kode+'"?')) return;
     ambil('pesan-aksi').textContent='Memproses...';
     try {
       await simpanServer({mode,originalKode:barang.kode});
-      ambil('pesan-aksi').textContent=mode==='delete'?'Barang berhasil dihapus.':mode==='activate'?'Barang berhasil diaktifkan kembali.':'Barang berhasil dinonaktifkan.';
+      ambil('pesan-aksi').textContent=mode==='delete'?'Barang dihapus dari master. Riwayat tetap tersimpan.':mode==='activate'?'Barang berhasil diaktifkan kembali.':'Barang berhasil dinonaktifkan.';
     } catch(e) {ambil('pesan-aksi').textContent='Gagal: '+e.message;}
   }
   ambil('filter-status').onchange=tampilkanBarang;
@@ -756,7 +758,7 @@ document.addEventListener("DOMContentLoaded", function () {
       aplikasi: "Damar Stok",
       versi: 1,
       dibuatPada: sekarang.toISOString(),
-      barang: daftarBarang,
+      barang: [...daftarBarang, ...arsipBarang],
       riwayat: riwayatTransaksi
     };
 
@@ -799,7 +801,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const body={mode:'migration',barang:data.barang,riwayat:data.riwayat};
       await api({...body,preview:true}); migrasiSiap=body;
       tampilPreview(ambil('baris-migrasi'),body);
-      ambil('ringkasan-migrasi').textContent=data.barang.length+' barang, '+data.riwayat.length+' riwayat. Stok cadangan dipertahankan; riwayat tidak dihitung ulang.';
+      ambil('ringkasan-migrasi').textContent=data.barang.filter(x=>!x.dihapus).length+' barang master, '+data.barang.filter(x=>x.dihapus).length+' arsip dihapus, '+data.riwayat.length+' riwayat. Stok cadangan dipertahankan; riwayat tidak dihitung ulang.';
       ambil('preview-migrasi').hidden=false;
       ambil('pesan-pemulihan').textContent='Pratinjau valid. Konfirmasi untuk mengisi database kosong.';
     } catch(e){ambil('pesan-pemulihan').textContent='Migrasi belum tersimpan: '+e.message;}

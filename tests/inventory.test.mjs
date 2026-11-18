@@ -92,9 +92,9 @@ test('hapus diperiksa server; nonaktif menolak manual/impor secara atomik dan da
  await assert.rejects(execute(db,{mode:'delete',originalKode:'00123'},'u'),/stok harus nol/);
  await assert.rejects(execute(db,{mode:'deactivate',originalKode:'00123'},'u'),/stok harus nol/);
  await execute(db,{mode:'transactions',riwayat:[row('WITH_HISTORY',1,'masuk')]},'u');
- await assert.rejects(execute(db,{mode:'delete',originalKode:'WITH_HISTORY'},'u'),/belum memiliki riwayat/);
+ await assert.rejects(execute(db,{mode:'delete',originalKode:'WITH_HISTORY'},'u'),/stok harus nol/);
  await execute(db,{mode:'transactions',riwayat:[row('WITH_HISTORY',1,'keluar')]},'u');
- await assert.rejects(execute(db,{mode:'delete',originalKode:'WITH_HISTORY'},'u'),/belum memiliki riwayat/);
+
  await execute(db,{mode:'delete',originalKode:'EMPTY'},'u');
  assert.equal((await snapshot(db)).barang.some(x=>x.kode==='EMPTY'),false);
  await execute(db,{mode:'deactivate',originalKode:'WITH_HISTORY'},'u');
@@ -119,11 +119,54 @@ test('migrasi tambahan mempertahankan data lama dan backup nonaktif dapat dipuli
  await legacy.exec(await readFile('netlify/database/migrations/20261112140000_create_inventory.sql','utf8'));
  await legacy.query('INSERT INTO damar_items(kode,nama,satuan,stok) VALUES ($1,$2,$3,$4)',[item.kode,item.nama,item.satuan,item.stok]);
  await legacy.exec(await readFile('netlify/database/migrations/20261118140000_add_item_active.sql','utf8'));
+ await legacy.exec(await readFile('netlify/database/migrations/20261118150000_add_item_deleted.sql','utf8'));
  const state=await snapshot(legacy);assert.equal(state.barang[0].aktif,true);assert.equal(state.barang[0].stok,10);
  }finally{await legacy.close();}
  const db=await setup();try{
  await execute(db,{mode:'migration',barang:[{...item,stok:0,aktif:false}],riwayat:[row('00123',1,'masuk'),row('00123',1,'keluar')]},'u');
  const state=await snapshot(db);assert.equal(state.barang[0].aktif,false);assert.equal(state.riwayat.length,2);
  await assert.rejects(execute(db,{mode:'transactions',riwayat:[row('00123',1,'masuk')]},'u'),/nonaktif/);
+ }finally{await db.close();}
+});
+
+test('hapus master ber-riwayat: arsip tersembunyi, transaksi ditolak, backup dapat dipulihkan',async()=>{
+ const db=await setup(), restored=await setup();try {
+ await execute(db,{mode:'items',barang:[item]},'u');
+ await execute(db,{mode:'transactions',riwayat:[row('00123',10)]},'old-actor');
+ await execute(db,{mode:'edit',originalKode:'00123',kode:'00123',nama:'Nama diubah',satuan:'PCS'},'u');
+ const historyBefore=(await db.query('SELECT * FROM damar_history')).rows;
+ await execute(db,{mode:'delete',originalKode:'00123'},'u',true);
+ assert.equal((await snapshot(db)).barang.length,1);
+ await execute(db,{mode:'delete',originalKode:'00123'},'u');
+ const state=await snapshot(db);
+ assert.equal(state.barang.length,0);assert.equal(state.arsip.length,1);
+ assert.equal(state.arsip[0].dihapus,true);assert.equal(state.arsip[0].stok,0);
+ assert.deepEqual((await db.query('SELECT * FROM damar_history')).rows,historyBefore);
+ for(const mode of ['activate','deactivate','edit','delete']) {
+  await assert.rejects(execute(db,{mode,originalKode:'00123',kode:'NEW',nama:'New',satuan:'PCS'},'u'),/tidak ditemukan/);
+ }
+ await assert.rejects(execute(db,{mode:'transactions',manual:true,requestId:'archived',riwayat:[row('00123',1,'masuk')]},'u'),/dihapus/);
+ await assert.rejects(execute(db,{mode:'transactions',riwayat:[row('00123',2,'masuk')]},'u'),/dihapus/);
+ await assert.rejects(execute(db,{mode:'items',barang:[{...item,kode:'00123',stok:0}]},'u'),/terdaftar/);
+ await assert.rejects(execute(db,{mode:'migration',barang:[{...item,kode:'NEW'}],riwayat:[]},'u'),/database kosong/);
+ assert.deepEqual(await snapshot(db),state);
+ const backup={mode:'migration',barang:[...state.barang,...state.arsip],riwayat:state.riwayat};
+ await execute(restored,backup,'restore');
+ const result=await snapshot(restored);
+ assert.equal(result.barang.length,0);assert.deepEqual(result.arsip,state.arsip);
+ assert.deepEqual(result.riwayat,state.riwayat);
+ }finally{await db.close();await restored.close();}
+});
+
+test('hapus menolak stok yang berubah sejak layar dibuka; bulk ke arsip rollback seluruhnya',async()=>{
+ const db=await setup();try {
+ await execute(db,{mode:'items',barang:[{...item,stok:0},{...item,kode:'OTHER'}]},'u');
+ await execute(db,{mode:'transactions',riwayat:[row('00123',1,'masuk')]},'u');
+ await assert.rejects(execute(db,{mode:'delete',originalKode:'00123'},'u'),/stok harus nol/);
+ await execute(db,{mode:'transactions',riwayat:[row('00123',1,'keluar')]},'u');
+ await execute(db,{mode:'delete',originalKode:'00123'},'u');
+ const before=await snapshot(db);
+ await assert.rejects(execute(db,{mode:'transactions',riwayat:[row('OTHER',2),row('00123',2,'masuk')]},'u'),/dihapus/);
+ assert.deepEqual(await snapshot(db),before);
  }finally{await db.close();}
 });

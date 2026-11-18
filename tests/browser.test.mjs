@@ -89,11 +89,11 @@ test('filter status, aktifkan kembali, konfirmasi hapus, dan Excel nonaktif dito
  const w=dom.window,d=w.document;
  assert.doesNotMatch(d.getElementById('daftar-stok').textContent,/Susu/);
  let confirmation='';w.confirm=message=>{confirmation=message;return false;};
- [...d.querySelectorAll('.aksi-barang button')].find(b=>b.textContent==='Hapus').click();
+ [...d.querySelectorAll('.aksi-barang button')].find(b=>b.textContent==='Hapus dari Master').click();
  assert.match(confirmation,/Kosong/);assert.match(confirmation,/EMPTY/);assert.equal(requests.length,0);
  d.getElementById('filter-status').value='nonaktif';d.getElementById('filter-status').dispatchEvent(new w.Event('change'));
  assert.match(d.getElementById('daftar-stok').textContent,/Aktifkan kembali/);
- assert.doesNotMatch(d.getElementById('daftar-stok').textContent,/Hapus/);
+ assert.match(d.getElementById('daftar-stok').textContent,/Hapus dari Master/);
  assert.equal([...d.getElementById('pilih-barang').options].some(x=>x.value==='00123'),false);
  d.getElementById('menu-masuk').click();
  const sheet=w.XLSX.utils.aoa_to_sheet([['MASUK'],['BARCODE','NAMA ITEM','QTY','SATUAN'],['00123','Susu',2,'PCS']]);
@@ -103,5 +103,48 @@ test('filter status, aktifkan kembali, konfirmasi hapus, dan Excel nonaktif dito
  input.dispatchEvent(new w.Event('change'));await flush();
  assert.match(d.getElementById('pesan-impor-transaksi').textContent,/nonaktif/);
  assert.equal(d.getElementById('proses-impor-transaksi').disabled,true);assert.equal(requests.length,0);
+ dom.window.close();
+});
+
+test('hapus master ber-riwayat menunggu server, hilang dari semua filter, dan riwayat tetap',async()=>{
+ const item={kode:'00123',nama:'Susu',satuan:'PCS',stok:0,aktif:true,memiliki_riwayat:true};
+ let state={barang:[item],riwayat:[{kode:'00123',nama:'Susu Lama',satuan:'PCS',tanggal:'2026-11-18',jenis:'keluar',jumlah:10,keterangan:''}],arsip:[]};
+ let complete;const requests=[];
+ const dom=await page(async(_url,opts)=>{
+  if(opts.method==='GET')return {ok:true,json:async()=>state};
+  requests.push(JSON.parse(opts.body));return new Promise(r=>complete=r);
+ });
+ const w=dom.window,d=w.document;
+ const remove=()=>[...d.querySelectorAll('.aksi-barang button')].find(b=>b.textContent==='Hapus dari Master');
+ let message='';w.confirm=m=>{message=m;return false;};remove().click();await flush();
+ assert.match(message,/Riwayat tetap tersimpan/);assert.equal(requests.length,0);
+ w.confirm=()=>true;remove().click();await flush();
+ assert.match(d.getElementById('daftar-stok').textContent,/Susu/);
+ complete({ok:false,json:async()=>({error:'Stok harus nol'})});await flush();
+ assert.match(d.getElementById('pesan-aksi').textContent,/Stok harus nol/);
+ assert.match(d.getElementById('daftar-stok').textContent,/Susu/);
+ remove().click();await flush();
+ state={...state,barang:[],arsip:[{...item,aktif:false,dihapus:true}]};
+ complete({ok:true,json:async()=>state});await flush();
+ assert.equal(requests.at(-1).mode,'delete');
+ for(const filter of ['aktif','nonaktif','semua']) {
+  d.getElementById('filter-status').value=filter;d.getElementById('filter-status').dispatchEvent(new w.Event('change'));
+  assert.doesNotMatch(d.getElementById('daftar-stok').textContent,/Susu/);
+ }
+ d.getElementById('muat-server').click();await flush();
+ assert.doesNotMatch(d.getElementById('daftar-stok').textContent,/Susu/);
+ d.getElementById('menu-riwayat').click();assert.match(d.getElementById('daftar-riwayat').textContent,/Susu Lama/);
+ // Download includes the hidden record required by history foreign keys on restore.
+ let blob;w.URL.createObjectURL=b=>{blob=b;return 'blob:test';};w.URL.revokeObjectURL=()=>{};
+ w.HTMLAnchorElement.prototype.click=()=>{};
+ d.getElementById('cadangkan-data').click();
+ const contents=await new Promise(resolve=>{const reader=new w.FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(blob);});
+ const backup=JSON.parse(contents);assert.equal(backup.barang[0].dihapus,true);assert.equal(backup.riwayat.length,1);
+ const input=d.getElementById('file-cadangan');
+ Object.defineProperty(input,'files',{value:[{size:contents.length,text:async()=>contents}]});
+ input.dispatchEvent(new w.Event('change'));await flush();
+ assert.equal(requests.at(-1).mode,'migration');assert.equal(requests.at(-1).barang[0].dihapus,true);
+ complete({ok:true,json:async()=>state});await flush();
+ assert.equal(d.getElementById('preview-migrasi').hidden,false);
  dom.window.close();
 });
