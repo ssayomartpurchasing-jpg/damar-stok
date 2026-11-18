@@ -134,6 +134,23 @@
         >
       </div>
 
+      <label for="filter-status">Status barang
+        <select id="filter-status"><option value="aktif">Aktif</option><option value="nonaktif">Nonaktif</option><option value="semua">Semua</option></select>
+      </label>
+      <p id="pesan-aksi" role="status"></p>
+      <dialog id="dialog-edit" aria-labelledby="judul-edit">
+        <h2 id="judul-edit">Edit Master Barang</h2>
+        <form id="form-edit" class="form-grid">
+          <label>Barcode<input id="edit-kode" type="text" maxlength="200" required></label>
+          <label>Nama Barang<input id="edit-nama" type="text" maxlength="200" required></label>
+          <label>Satuan<input id="edit-satuan" type="text" maxlength="200" required></label>
+          <p id="edit-stok" class="info-stok"></p>
+          <p id="edit-catatan" class="catatan selebar"></p>
+          <p id="pesan-edit" role="status" class="selebar"></p>
+          <button id="simpan-edit" type="submit">Simpan Perubahan</button>
+          <button id="batal-edit" type="button" class="sekunder">Batal</button>
+        </form>
+      </dialog>
       <p id="jumlah-barang" class="catatan" role="status"></p>
 
       <div class="tabel-scroll">
@@ -144,6 +161,7 @@
               <th>Nama Barang</th>
               <th>Satuan</th>
               <th class="angka">Stok</th>
+              <th>Aksi</th>
             </tr>
           </thead>
           <tbody id="daftar-stok"></tbody>

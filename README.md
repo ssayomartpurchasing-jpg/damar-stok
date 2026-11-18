@@ -26,4 +26,17 @@ Buka **Migrasi / Pulihkan Cadangan JSON**, pilih file, periksa pratinjau barang 
 
 ## Pengujian
 
-`npm test` menjalankan enam pengujian: transaksi manual, stok kurang, impor atomik, preview tanpa penyimpanan, impor duplikat, retry, migrasi tanpa menimpa, baca dan tulis endpoint tanpa cookie/token serta pemeliharaan data lama, format Excel dan barcode nol depan, serta tampilan saat koneksi gagal. SQL diuji dengan PGlite (mesin PostgreSQL lokal); alur halaman diuji dengan DOM simulasi. Pengujian ini tidak menggantikan pemeriksaan akses publik dan koneksi database Netlify pada Deploy Preview. Build dan penerapan migrasi dilakukan platform saat deploy.
+`npm test` menjalankan pengujian: transaksi manual, stok kurang, impor atomik, preview tanpa penyimpanan, impor duplikat, retry, migrasi tanpa menimpa, baca dan tulis endpoint tanpa cookie/token serta pemeliharaan data lama, format Excel dan barcode nol depan, serta tampilan saat koneksi gagal. SQL diuji dengan PGlite (mesin PostgreSQL lokal); alur halaman diuji dengan DOM simulasi. Pengujian ini tidak menggantikan pemeriksaan akses publik dan koneksi database Netlify pada Deploy Preview. Build dan penerapan migrasi dilakukan platform saat deploy.
+
+
+## Edit, hapus, dan status master barang
+
+Kolom Aksi pada Stok Barang menyediakan Edit. Stok tampil sebagai informasi; perubahan stok tetap melalui transaksi. Barcode berupa teks unik tanpa membedakan huruf besar/kecil, termasuk barcode barang nonaktif. Barcode dan satuan hanya dapat diubah sebelum barang memiliki riwayat transaksi. Nama dapat diubah tanpa mengganti nama pada riwayat lama.
+
+Hapus permanen hanya tersedia untuk stok nol tanpa riwayat, dengan konfirmasi nama dan barcode. Barang berstok nol yang memiliki riwayat dapat dinonaktifkan. Filter Aktif/Nonaktif/Semua dan Aktifkan kembali tersedia. Barang nonaktif tetap masuk cadangan JSON dan ekspor Excel (dengan kolom Status), tetapi tidak tersedia pada pilihan transaksi dan ditolak oleh API untuk transaksi manual maupun impor. Pemulihan JSON ke database kosong mempertahankan status nonaktif; cadangan lama tanpa status dianggap aktif.
+
+Server memeriksa ulang aturan edit, hapus, dan nonaktif di dalam transaksi dengan penguncian tabel yang sama dengan transaksi stok dan impor. Jika transaksi masuk lebih dahulu, pemeriksaan memakai stok dan riwayat terbaru; jika hapus/nonaktif lebih dahulu, transaksi berikutnya ditolak. Penghapusan hanya menyentuh master yang memenuhi syarat, tanpa cascade atau penghapusan riwayat. Semua keberhasilan ditampilkan setelah konfirmasi API.
+
+Migrasi tambahan `20261118140000_add_item_active.sql` menambahkan status aktif dengan nilai awal aktif untuk semua barang lama dan pembatasan stok nol bagi barang nonaktif. Migrasi sebelumnya tetap utuh. Platform menerapkannya saat Deploy Preview; tidak ada reset database.
+
+Pengujian tambahan memeriksa edit melalui API dan pembacaan ulang, penolakan perubahan stok/barcode/satuan terlarang, nama riwayat tetap, barcode duplikat termasuk barang nonaktif, hapus kosong tanpa riwayat, penolakan hapus berstok/berriwayat, nonaktif stok nol, penolakan manual/impor atomik, serta aktivasi kembali. Pengujian DOM memeriksa isi formulir, kegagalan server, penundaan pesan sukses, filter status, konfirmasi hapus, dan penolakan Excel nonaktif. Uji pada PostgreSQL lokal dan DOM simulasi; pemeriksaan browser serta transaksi bersamaan pada layanan Netlify tetap menjadi pemeriksaan penerimaan preview.

@@ -160,8 +160,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const tabel = ambil("daftar-stok");
     const kata = ambil("cari-barang").value.trim().toLowerCase();
 
+    const status = ambil("filter-status").value;
     const hasil = daftarBarang.filter(function (barang) {
-      return (
+      return (status === "semua" || (status === "aktif" ? barang.aktif !== false : barang.aktif === false)) && (
         barang.kode.toLowerCase().includes(kata) ||
         barang.nama.toLowerCase().includes(kata)
       );
@@ -176,7 +177,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (hasil.length === 0) {
       barisKosong(
         tabel,
-        4,
+        5,
         kata ? "Barang tidak ditemukan." : "Belum ada barang."
       );
       return;
@@ -196,8 +197,58 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (index === 3) kolom.className = "angka";
       });
+      if (barang.aktif === false) {
+        const status = document.createElement('small');
+        status.className = 'status-nonaktif'; status.textContent = 'Nonaktif';
+        baris.cells[1].appendChild(status);
+      }
+      const aksi = baris.insertCell(); aksi.className = 'aksi-barang';
+      const tombol = (label, callback) => {
+        const b = document.createElement('button'); b.type='button'; b.className='sekunder';
+        b.textContent=label; b.setAttribute('aria-label',label+' '+barang.nama); b.onclick=callback; aksi.appendChild(b);
+      };
+      tombol('Edit', () => bukaEdit(barang));
+      if (barang.aktif === false) tombol('Aktifkan kembali', () => ubahStatus(barang,'activate'));
+      else if (barang.stok === 0 && barang.memiliki_riwayat) tombol('Nonaktifkan', () => ubahStatus(barang,'deactivate'));
+      if (barang.stok === 0 && !barang.memiliki_riwayat) tombol('Hapus', () => ubahStatus(barang,'delete'));
     });
   }
+
+  let kodeEdit = null;
+  function bukaEdit(barang) {
+    kodeEdit=barang.kode;
+    ambil('edit-kode').value=barang.kode; ambil('edit-nama').value=barang.nama;
+    ambil('edit-satuan').value=barang.satuan;
+    ambil('edit-kode').readOnly=Boolean(barang.memiliki_riwayat);
+    ambil('edit-satuan').readOnly=Boolean(barang.memiliki_riwayat);
+    ambil('edit-stok').textContent='Stok: '+angka(barang.stok)+' '+barang.satuan+' (informasi saja)';
+    ambil('edit-catatan').textContent=barang.memiliki_riwayat
+      ? 'Barcode dan satuan terkunci karena sudah memiliki riwayat. Nama pada riwayat lama tetap.'
+      : 'Barcode harus unik, termasuk terhadap barang nonaktif. Stok diubah melalui transaksi.';
+    ambil('pesan-edit').textContent=''; ambil('dialog-edit').showModal();
+  }
+  ambil('batal-edit').onclick=()=>ambil('dialog-edit').close();
+  ambil('form-edit').onsubmit=async event=>{
+    event.preventDefault();
+    const body={mode:'edit',originalKode:kodeEdit,kode:ambil('edit-kode').value,nama:ambil('edit-nama').value,satuan:ambil('edit-satuan').value};
+    ambil('simpan-edit').disabled=true;
+    ambil('pesan-edit').textContent='Menyimpan...';
+    try {
+      await simpanServer(body); ambil('dialog-edit').close();
+      ambil('pesan-aksi').textContent='Perubahan barang berhasil tersimpan.';
+    } catch(e) {ambil('pesan-edit').textContent='Gagal menyimpan: '+e.message;}
+    finally {ambil('simpan-edit').disabled=false;}
+  };
+  async function ubahStatus(barang,mode) {
+    if(mode==='delete' && !confirm('Hapus permanen barang "'+barang.nama+'" dengan barcode "'+barang.kode+'"?')) return;
+    if(mode==='deactivate' && !confirm('Nonaktifkan barang "'+barang.nama+'" dengan barcode "'+barang.kode+'"?')) return;
+    ambil('pesan-aksi').textContent='Memproses...';
+    try {
+      await simpanServer({mode,originalKode:barang.kode});
+      ambil('pesan-aksi').textContent=mode==='delete'?'Barang berhasil dihapus.':mode==='activate'?'Barang berhasil diaktifkan kembali.':'Barang berhasil dinonaktifkan.';
+    } catch(e) {ambil('pesan-aksi').textContent='Gagal: '+e.message;}
+  }
+  ambil('filter-status').onchange=tampilkanBarang;
 
   function perbaruiInfoStok() {
     const barang = daftarBarang.find(function (item) {
@@ -216,7 +267,7 @@ document.addEventListener("DOMContentLoaded", function () {
     pilihan.replaceChildren();
     pilihan.add(new Option("-- Pilih barang --", ""));
 
-    daftarBarang.forEach(function (barang) {
+    daftarBarang.filter(barang => barang.aktif !== false).forEach(function (barang) {
       pilihan.add(
         new Option(barang.kode + " — " + barang.nama, barang.kode)
       );
@@ -452,8 +503,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const jumlah = Number(ambil("jumlah-transaksi").value);
     const keterangan = ambil("keterangan-transaksi").value.trim();
 
-    if (!barang) {
-      pesan.textContent = "Pilih barang terlebih dahulu.";
+    if (!barang || barang.aktif === false) {
+      pesan.textContent = "Pilih barang aktif terlebih dahulu.";
       return;
     }
 
@@ -497,7 +548,7 @@ document.addEventListener("DOMContentLoaded", function () {
     try {
       await simpanServer({mode:"transactions", manual:true, riwayat:[catatan]});
     } catch (error) {
-      pesan.textContent = "Gagal menyimpan. Stok belum berubah.";
+      pesan.textContent = "Gagal menyimpan: " + error.message;
       console.error(error);
       return;
     }
@@ -533,13 +584,14 @@ document.addEventListener("DOMContentLoaded", function () {
         : urutkanRiwayat(riwayatTransaksi);
 
       const dataStok = [
-        ["Kode / Barcode", "Nama Barang", "Satuan", "Stok"],
+        ["Kode / Barcode", "Nama Barang", "Satuan", "Stok", "Status"],
         ...daftarBarang.map(function (barang) {
           return [
             String(barang.kode),
             barang.nama,
             barang.satuan,
-            barang.stok
+            barang.stok,
+            barang.aktif === false ? "Nonaktif" : "Aktif"
           ];
         })
       ];
@@ -642,6 +694,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const barang=daftarBarang.find(x=>x.kode.toLowerCase()===kode.toLowerCase());
       if(!kode||!nama||!satuan||typeof jumlah!=='number'||!Number.isFinite(jumlah)||jumlah<(master?0:.001)) throw new Error('Baris '+(i+1)+': barcode, nama, QTY atau satuan tidak valid.');
       if(!master && !barang) throw new Error('Baris '+(i+1)+': barcode tidak ditemukan: '+kode);
+      if(!master && barang.aktif===false) throw new Error('Baris '+(i+1)+': barang nonaktif: '+kode);
       if(!master && barang.satuan.toLowerCase()!==satuan.toLowerCase()) throw new Error('Baris '+(i+1)+': satuan berbeda dengan master.');
       hasil.push(master?{kode,nama,satuan,stok:jumlah}:{kode:barang.kode,nama:barang.nama,satuan:barang.satuan,jumlah,tanggal:ambil('tanggal-transaksi').value,jenis:jenisTransaksi,keterangan:'Impor Excel'});
     }
