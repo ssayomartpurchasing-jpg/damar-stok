@@ -349,3 +349,11 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+
+#filter-status { max-width: 220px; margin: 10px 0; }
+.aksi-barang { min-width: 190px; }
+.aksi-barang button { padding: 5px 9px; margin: 2px 4px 2px 0; font-size: 12px; }
+.status-nonaktif { display: block; color: #946019; margin-top: 4px; }
+dialog { width: min(600px, calc(100% - 32px)); border: 1px solid var(--garis); border-radius: 14px; padding: 24px; color: var(--teks); }
+dialog::backdrop { background: rgba(25, 62, 50, .35); }
+input[readonly] { background: #edf4ef; color: #52665a; }
